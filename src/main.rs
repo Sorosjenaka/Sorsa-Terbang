@@ -132,21 +132,23 @@ async fn main() -> Result<()> {
             auto_launch,
             browser,
         } => {
+            let active_port = BrowserShortcutManager::resolve_port(cli.port);
             let workdir = PathBuf::from(".");
             if auto_launch {
                 if let Some(b_type) = BrowserType::from_str(&browser) {
-                    let _ = BrowserShortcutManager::ensure_browser_running(b_type, cli.port, &workdir);
+                    let _ = BrowserShortcutManager::ensure_browser_running(b_type, active_port, &workdir);
                 } else {
                     eprintln!("Unknown browser type: '{}'. Valid options: chrome, brave, edge, firefox", browser);
                 }
             }
 
-            let daemon = WatcherDaemon::new(&db, &prompt_engine, cli.port, interval);
+            let daemon = WatcherDaemon::new(&db, &prompt_engine, active_port, interval);
             daemon.start_daemon().await?;
         }
 
         Commands::Cycle => {
-            let daemon = WatcherDaemon::new(&db, &prompt_engine, cli.port, 300);
+            let active_port = BrowserShortcutManager::resolve_port(cli.port);
+            let daemon = WatcherDaemon::new(&db, &prompt_engine, active_port, 300);
             daemon.run_single_cycle().await?;
         }
 
@@ -159,6 +161,7 @@ async fn main() -> Result<()> {
             let b_type = BrowserType::from_str(&browser)
                 .with_context(|| format!("Unknown browser '{}'. Choose: chrome, brave, edge, firefox", browser))?;
 
+            let active_port = BrowserShortcutManager::resolve_port(port);
             let workdir = PathBuf::from(".");
             println!("Detecting {} installation...", b_type.display_name());
 
@@ -169,14 +172,14 @@ async fn main() -> Result<()> {
             }
 
             if launch {
-                println!("Ensuring Sorsa extension is provisioned and browser is running with debugging port {}...", port);
-                let sc = BrowserShortcutManager::ensure_browser_running(b_type, port, &workdir)?;
-                println!("Shortcut and session ready: {:?}", sc);
+                println!("Ensuring Sorsa extension is provisioned and browser is running with debugging port {}...", active_port);
+                let (sc, final_port) = BrowserShortcutManager::ensure_browser_running(b_type, active_port, &workdir)?;
+                println!("Shortcut and session ready: {:?} on port {}", sc, final_port);
             } else {
                 println!("Provisioning Sorsa extension and creating shortcut...");
-                let sc = BrowserShortcutManager::create_shortcut(b_type, port, &workdir, None)?;
+                let sc = BrowserShortcutManager::create_shortcut(b_type, active_port, &workdir, None)?;
                 println!("Generated debugging shortcut at: {:?}", sc);
-                println!("Run this shortcut or launch with --launch to start debugging session.");
+                println!("Run this shortcut or launch with --launch to start debugging session on port {}.", active_port);
             }
         }
 
@@ -210,7 +213,8 @@ async fn main() -> Result<()> {
 
         Commands::FsmCheck => {
             println!("Evaluating FSM status for all tracked accounts...");
-            let daemon = WatcherDaemon::new(&db, &prompt_engine, cli.port, 300);
+            let active_port = BrowserShortcutManager::resolve_port(cli.port);
+            let daemon = WatcherDaemon::new(&db, &prompt_engine, active_port, 300);
             daemon.run_single_cycle().await?;
         }
 

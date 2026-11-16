@@ -1,7 +1,8 @@
 use crate::extension::SorsaExtensionProvisioner;
 use anyhow::{bail, Context, Result};
 use std::env;
-use std::net::TcpStream;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -129,10 +130,65 @@ impl BrowserShortcutManager {
         list
     }
 
+    /// Check if TCP port is completely free to bind
+    pub fn is_port_available(port: u16) -> bool {
+        TcpListener::bind(("127.0.0.1", port)).is_ok()
+    }
+
+    /// Check if port is running a valid browser CDP instance (responds on /json/version)
+    pub fn is_cdp_endpoint(port: u16) -> bool {
+        let addr = format!("127.0.0.1:{}", port);
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)) {
+            let req = format!("GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", port);
+            if stream.write_all(req.as_bytes()).is_ok() {
+                let mut buf = [0u8; 256];
+                if let Ok(n) = stream.read(&mut buf) {
+                    let s = String::from_utf8_lossy(&buf[..n]);
+                    return s.contains("200 OK") || s.contains("Browser") || s.contains("webSocketDebuggerUrl");
+                }
+            }
+        }
+        false
+    }
+
     /// Check if debugging port is active on 127.0.0.1
     pub fn is_port_active(port: u16) -> bool {
         let addr = format!("127.0.0.1:{}", port);
         TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)).is_ok()
+    }
+
+    /// Intelligently resolve port conflicts:
+    /// 1. If preferred_port is already running our browser CDP -> reuse it!
+    /// 2. If preferred_port is completely free to bind -> use it!
+    /// 3. If preferred_port is occupied by a conflict (another app) -> auto-increment to find next free port!
+    pub fn resolve_port(preferred_port: u16) -> u16 {
+        if Self::is_cdp_endpoint(preferred_port) {
+            info!("Port {} has an active browser CDP session. Reusing.", preferred_port);
+            return preferred_port;
+        }
+
+        if Self::is_port_available(preferred_port) {
+            return preferred_port;
+        }
+
+        warn!(
+            "PORT CONFLICT: Port {} is in use by another non-CDP process. Searching for available fallback port...",
+            preferred_port
+        );
+
+        for offset in 1..=50 {
+            let candidate = preferred_port + offset;
+            if Self::is_cdp_endpoint(candidate) {
+                info!("Found active browser CDP on fallback port {}. Reusing.", candidate);
+                return candidate;
+            }
+            if Self::is_port_available(candidate) {
+                info!("Resolved port conflict: Using available port {}.", candidate);
+                return candidate;
+            }
+        }
+
+        preferred_port
     }
 
     /// Format debugging command line arguments for the browser including --load-extension
@@ -217,27 +273,28 @@ impl BrowserShortcutManager {
             bail!("PowerShell shortcut creation failed: {}", err);
         }
 
-        info!("Created debug shortcut at {:?}", shortcut_path);
+        info!("Created debug shortcut at {:?} (Port: {})", shortcut_path, port);
         Ok(shortcut_path)
     }
 
-    /// Auto-launch browser if port is not yet active
+    /// Auto-launch browser if port is not yet active (with auto port conflict resolution)
     pub fn ensure_browser_running(
         browser: BrowserType,
-        port: u16,
+        requested_port: u16,
         workdir: &Path,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, u16)> {
+        let port = Self::resolve_port(requested_port);
         let sc_path = Self::create_shortcut(browser, port, workdir, None)?;
 
-        if Self::is_port_active(port) {
-            info!("Debugging port {} is already active and listening", port);
-            return Ok(sc_path);
+        if Self::is_cdp_endpoint(port) {
+            info!("Browser debugging session is already active on port {}", port);
+            return Ok((sc_path, port));
         }
 
         info!(
-            "Debugging port {} is not active. Spawning {} in background with Sorsa extension...",
-            port,
-            browser.display_name()
+            "Spawning {} on port {} in background with Sorsa extension...",
+            browser.display_name(),
+            port
         );
 
         let ext_dir = workdir.join("sorsa_extension");
@@ -261,12 +318,12 @@ impl BrowserShortcutManager {
             std::thread::sleep(Duration::from_millis(500));
             if Self::is_port_active(port) {
                 info!("Debugging port {} is now active and ready!", port);
-                return Ok(sc_path);
+                return Ok((sc_path, port));
             }
         }
 
-        warn!("Browser spawned, but port {} did not open within 10s. It may still be initializing.", port);
-        Ok(sc_path)
+        warn!("Browser spawned, waiting for port {} to finish initializing.", port);
+        Ok((sc_path, port))
     }
 
     /// Read and inspect an existing Windows .lnk shortcut file
