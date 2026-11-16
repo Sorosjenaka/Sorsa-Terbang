@@ -1,0 +1,9 @@
+/target
+*.sqlite
+*.sqlite3
+*.db
+*.lnk
+browser-profile/
+sorsa_browser_profile/
+temp_*
+*.log

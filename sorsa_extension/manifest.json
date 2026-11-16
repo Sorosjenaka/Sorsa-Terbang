@@ -1,0 +1,36 @@
+{
+   "action": {
+      "default_popup": "popup.html",
+      "default_title": "Pizx Score"
+   },
+   "background": {
+      "service_worker": "background.js",
+      "scripts": ["background.js"]
+   },
+   "browser_specific_settings": {
+      "gecko": {
+         "id": "sorsa-extension@sorosjenaka.local",
+         "strict_min_version": "109.0"
+      }
+   },
+   "content_scripts": [
+      {
+         "matches": ["*://*.twitter.com/*", "*://*.x.com/*"],
+         "js": ["content.js"],
+         "css": ["styles.css"],
+         "run_at": "document_idle"
+      }
+   ],
+   "description": "Professional score viewer for Twitter/X profiles — displays Sorsa and TweetScout scores with color-coded quality indicators.",
+   "icons": {
+      "128": "logo_x.png",
+      "16": "logo_x.png",
+      "48": "logo_x.png"
+   },
+   "manifest_version": 3,
+   "name": "Pizx Score",
+   "host_permissions": [ "*://*.twitter.com/*", "*://*.x.com/*", "https://app.sorsa.io/*", "https://api.sorsa.io/*", "https://twitterscore.io/*" ],
+   "optional_host_permissions": [ "*://*.twitter.com/*", "*://*.x.com/*", "https://app.sorsa.io/*", "https://api.sorsa.io/*", "https://twitterscore.io/*" ],
+   "permissions": [ "activeTab", "storage", "scripting" ],
+   "version": "4.0"
+}
